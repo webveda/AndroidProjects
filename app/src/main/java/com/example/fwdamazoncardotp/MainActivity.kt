@@ -1,23 +1,35 @@
 package com.example.fwdamazoncardotp
 
-import android.content.Intent
-import android.os.Build
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
+
+    private val permissions = arrayOf(
+        Manifest.permission.RECEIVE_SMS,
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.READ_SMS,
+        Manifest.permission.POST_NOTIFICATIONS
+    )
+
+    private val requestPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ -> }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
 
-        val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS")
-        startActivity(intent)
-
-        // Start SMS forwarding service
-        val serviceIntent = Intent(this, SMSForwardService::class.java)
-
-        // For Android 8.0 (API 26+) use startForegroundService
-        startForegroundService(serviceIntent)
+        // Request permissions
+        if (!hasAllPermissions()) {
+            requestPermissionLauncher.launch(permissions)
+        }
     }
+
+    private fun hasAllPermissions(): Boolean =
+        permissions.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
 }
