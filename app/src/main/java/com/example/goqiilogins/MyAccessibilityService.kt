@@ -1,117 +1,99 @@
 package com.example.goqiilogins
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.GestureDescription
-import android.content.SharedPreferences
-import android.graphics.Path
-import android.graphics.Rect
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
 class MyAccessibilityService : AccessibilityService() {
 
-    private var prefs: SharedPreferences? = null
-
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        prefs = getSharedPreferences("coords", MODE_PRIVATE)
-        Log.d("MyService", "Accessibility Service connected")
-    }
-
-    private fun logNodeTree(node: AccessibilityNodeInfo?, depth: Int = 0) {
-        if (node == null) return
-        val prefix = " ".repeat(depth * 2)
-        Log.d(
-            "NodeTree",
-            "$prefix Class: ${node.className}, Text: ${node.text}, ID: ${node.viewIdResourceName}, Clickable: ${node.isClickable}"
-        )
-        for (i in 0 until node.childCount) {
-            logNodeTree(node.getChild(i), depth + 1)
-        }
-    }
+    private val handler = Handler(Looper.getMainLooper())
+    private var retryCount = 0
+    private val maxRetries = 5
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
 
+        // Only process when window content changes or state changes
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
+            event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            return
+        }
+
         val rootNode = rootInActiveWindow ?: return
 
-        // Capture clicks + save coordinates
-        if (event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
-            event.source?.let { node ->
-                val rect = Rect()
-                node.getBoundsInScreen(rect)
-                saveCoordinates(rect)
+        // Step 1: Look for SignIn button
+        if (MyAccessibilityServiceController.shouldClickSignIn) {
+            if (findAndClickButton(rootNode, "com.betaout.GOQii:id/signIn", "Sign In")) {
+                Log.d("MyService", "Clicked SignIn button")
+                MyAccessibilityServiceController.shouldClickSignIn = false
+                retryCount = 0
+
+                // Delay for UI to load next screen
+                handler.postDelayed({
+                    MyAccessibilityServiceController.shouldClickBtnLogin = true
+                }, 3000) // Increased to 3 seconds
+            } else {
+                retryCount++
+                if (retryCount >= maxRetries) {
+                    Log.d("MyService", "Max retries reached for SignIn")
+                    MyAccessibilityServiceController.shouldClickSignIn = false
+                    retryCount = 0
+                }
             }
         }
 
-        // Handle screen changes
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
-        ) {
-            val className = event.className?.toString()
-            if (className?.contains("HomeBasedTabActivity") == true) {
-                Log.d("MyService", "WelcomeScreen is active")
-                //logNodeTree(rootNode)
-            }
-
-            // Step 1: Tap "I already have an account"
-            if (findAndClickByText(rootNode, "Sign In, I already have an account")) {
-                Log.d("MyAccessibilityService", "Clicked: I already have an account")
-                return
-            }
-
-            // Step 2: Tap "Sign in with Google"
-            if (findAndClickByText(rootNode, "Sign in with Google")) {
-                Log.d("MyAccessibilityService", "Clicked: Sign in with Google")
-                return
+        // Step 2: Look for Google Login button
+        if (MyAccessibilityServiceController.shouldClickBtnLogin) {
+            if (findAndClickButton(rootNode, "com.betaout.GOQii:id/btnLogin", "Sign in with Google")) {
+                Log.d("MyService", "Clicked Google Login button")
+                MyAccessibilityServiceController.shouldClickBtnLogin = false
+                retryCount = 0
+            } else {
+                retryCount++
+                if (retryCount >= maxRetries) {
+                    Log.d("MyService", "Max retries reached for Google Login")
+                    MyAccessibilityServiceController.shouldClickBtnLogin = false
+                    retryCount = 0
+                }
             }
         }
+
+        rootNode.recycle()
     }
 
     override fun onInterrupt() {
-        Log.d("MyAccessibilityService", "Service interrupted")
+        Log.d("MyService", "Service interrupted")
     }
 
-    private fun findAndClickByText(node: AccessibilityNodeInfo?, text: String): Boolean {
-        node ?: return false
-        val nodes = node.findAccessibilityNodeInfosByText(text)
-        for (n in nodes) {
-            if (n.isClickable) {
-                n.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                return true
-            } else {
-                n.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    private fun findAndClickButton(rootNode: AccessibilityNodeInfo, viewId: String, text: String): Boolean {
+        // Try by ID first (more reliable)
+        val nodesById = rootNode.findAccessibilityNodeInfosByViewId(viewId)
+        for (node in nodesById) {
+            if (node.isClickable) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 return true
             }
         }
-        for (i in 0 until node.childCount) {
-            if (findAndClickByText(node.getChild(i), text)) return true
+
+        // Fallback to text search
+        val nodesByText = rootNode.findAccessibilityNodeInfosByText(text)
+        for (node in nodesByText) {
+            if (node.isClickable) {
+                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                return true
+            }
+            // Also check parent if node itself isn't clickable
+            node.parent?.let { parent ->
+                if (parent.isClickable) {
+                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    return true
+                }
+            }
         }
+
         return false
-    }
-
-    private fun saveCoordinates(rect: Rect) {
-        prefs?.edit()
-            ?.putInt("x", rect.centerX())
-            ?.putInt("y", rect.centerY())
-            ?.apply()
-
-        Log.d("MyService", "Saved center coordinates: (${rect.centerX()}, ${rect.centerY()})")
-    }
-
-    fun tapSavedCoordinates() {
-        val x = prefs?.getInt("x", -1) ?: -1
-        val y = prefs?.getInt("y", -1) ?: -1
-
-        if (x != -1 && y != -1) {
-            val gestureBuilder = GestureDescription.Builder()
-            val path = Path().apply { moveTo(x.toFloat(), y.toFloat()) }
-            gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, 100))
-            dispatchGesture(gestureBuilder.build(), null, null)
-            Log.d("MyService", "Tapped at saved coordinates: ($x, $y)")
-        } else {
-            Log.d("MyService", "No coordinates saved yet!")
-        }
     }
 }

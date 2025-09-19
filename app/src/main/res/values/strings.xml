@@ -1,5 +1,5 @@
 <resources>
     <string name="app_name">goqiilogins</string>
-    <string name="accessibility_service_description">Automates login flow for target app</string>
+    <string name="accessibility_service_description">Automates login flow for GOQii app</string>
 
 </resources>

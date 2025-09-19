@@ -1,9 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+<!--<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
-    android:packageNames="com.target.app"
+    android:packageNames="com.betaout.GOQii"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="100"
     android:canRetrieveWindowContent="true"
     android:description="@string/accessibility_service_description"
-    android:accessibilityFlags="flagReportViewIds"/>
+    android:accessibilityFlags="flagReportViewIds"/> -->
+
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged|typeViewClicked|typeViewFocused"
+    android:packageNames="com.betaout.GOQii"
+    android:accessibilityFeedbackType="feedbackAllMask"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:accessibilityFlags="flagReportViewIds|flagRequestFilterKeyEvents"/>
