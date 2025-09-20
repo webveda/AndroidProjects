@@ -10,90 +10,129 @@ import android.view.accessibility.AccessibilityNodeInfo
 class MyAccessibilityService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
-    private var retryCount = 0
-    private val maxRetries = 5
+    private var isChecking = false
+    private var goqiiDetected = false
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
+        event ?: return
+        if (event.packageName != "com.betaout.GOQii") return
 
-        // Only process when window content changes or state changes
-        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED &&
-            event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            return
+        //Log.d("MyService", "GOQii app detected")
+        goqiiDetected = true
+
+        // Start or restart checking whenever GoQii is detected
+        startOrRestartChecking()
+    }
+
+    private fun startOrRestartChecking() {
+        // Only check if we need to automate AND GoQii is detected
+        if ((MyAccessibilityServiceController.shouldClickSignIn || MyAccessibilityServiceController.shouldClickBtnLogin) && goqiiDetected) {
+            if (!isChecking) {
+                isChecking = true
+                startChecking()
+            }
+        } else {
+            // Stop checking if not needed
+            isChecking = false
         }
+    }
 
+    private fun startChecking() {
+        handler.post(object : Runnable {
+            override fun run() {
+                if (!isChecking) return
+
+                // Check if we still need to automate AND GoQii is still detected
+                if ((MyAccessibilityServiceController.shouldClickSignIn || MyAccessibilityServiceController.shouldClickBtnLogin) && goqiiDetected) {
+
+                    checkAndClickButtons()
+
+                    // Continue checking every 500ms
+                    handler.postDelayed(this, 500)
+                } else {
+                    // Stop checking when done
+                    isChecking = false
+                    //Log.d("MyService", "Stopping checks")
+                }
+            }
+        })
+    }
+
+    private fun checkAndClickButtons() {
         val rootNode = rootInActiveWindow ?: return
 
-        // Step 1: Look for SignIn button
-        if (MyAccessibilityServiceController.shouldClickSignIn) {
-            if (findAndClickButton(rootNode, "com.betaout.GOQii:id/signIn", "Sign In")) {
-                Log.d("MyService", "Clicked SignIn button")
-                MyAccessibilityServiceController.shouldClickSignIn = false
-                retryCount = 0
+        //Log.d("MyService", "=== CHECKING BUTTONS ===")
+        //Log.d("MyService", "Flags - SignIn: ${MyAccessibilityServiceController.shouldClickSignIn}, Google: ${MyAccessibilityServiceController.shouldClickBtnLogin}")
 
-                // Delay for UI to load next screen
-                handler.postDelayed({
-                    MyAccessibilityServiceController.shouldClickBtnLogin = true
-                }, 3000) // Increased to 3 seconds
+        // Step 1: Click SignIn button
+        if (MyAccessibilityServiceController.shouldClickSignIn) {
+            //Log.d("MyService", "Looking for SignIn button...")
+            if (clickButton(rootNode, "Sign In") || clickButtonById(rootNode, "com.betaout.GOQii:id/signIn")) {
+                //Log.d("MyService", "✓ SUCCESS: SignIn button clicked")
+                MyAccessibilityServiceController.shouldClickSignIn = false
+                MyAccessibilityServiceController.shouldClickBtnLogin = true
             } else {
-                retryCount++
-                if (retryCount >= maxRetries) {
-                    Log.d("MyService", "Max retries reached for SignIn")
-                    MyAccessibilityServiceController.shouldClickSignIn = false
-                    retryCount = 0
-                }
+                Log.d("MyService", "SignIn button not found yet")
             }
         }
 
-        // Step 2: Look for Google Login button
+        // Step 2: Click Google Login button
         if (MyAccessibilityServiceController.shouldClickBtnLogin) {
-            if (findAndClickButton(rootNode, "com.betaout.GOQii:id/btnLogin", "Sign in with Google")) {
-                Log.d("MyService", "Clicked Google Login button")
+            //Log.d("MyService", "Looking for Google Login button...")
+            if (clickButton(rootNode, "Sign in with Google") || clickButtonById(rootNode, "com.betaout.GOQii:id/btnLogin")) {
+                //Log.d("MyService", "✓ SUCCESS: Google Login clicked")
                 MyAccessibilityServiceController.shouldClickBtnLogin = false
-                retryCount = 0
             } else {
-                retryCount++
-                if (retryCount >= maxRetries) {
-                    Log.d("MyService", "Max retries reached for Google Login")
-                    MyAccessibilityServiceController.shouldClickBtnLogin = false
-                    retryCount = 0
-                }
+                Log.d("MyService", "Google Login button not found yet")
             }
         }
 
         rootNode.recycle()
     }
 
-    override fun onInterrupt() {
-        Log.d("MyService", "Service interrupted")
+    // Add this function to manually trigger checking when flags change
+    fun triggerCheck() {
+        handler.post {
+            startOrRestartChecking()
+        }
     }
 
-    private fun findAndClickButton(rootNode: AccessibilityNodeInfo, viewId: String, text: String): Boolean {
-        // Try by ID first (more reliable)
-        val nodesById = rootNode.findAccessibilityNodeInfosByViewId(viewId)
-        for (node in nodesById) {
+    private fun clickButton(rootNode: AccessibilityNodeInfo, text: String): Boolean {
+        val nodes = rootNode.findAccessibilityNodeInfosByText(text)
+        for (node in nodes) {
             if (node.isClickable) {
-                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                return true
+                //Log.d("MyService", "Found clickable button by text: '$text'")
+                return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             }
         }
+        return false
+    }
 
-        // Fallback to text search
-        val nodesByText = rootNode.findAccessibilityNodeInfosByText(text)
-        for (node in nodesByText) {
-            if (node.isClickable) {
-                node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                return true
-            }
-            // Also check parent if node itself isn't clickable
-            node.parent?.let { parent ->
-                if (parent.isClickable) {
-                    parent.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    return true
+    private fun clickButtonById(rootNode: AccessibilityNodeInfo, id: String): Boolean {
+        return try {
+            val nodes = rootNode.findAccessibilityNodeInfosByViewId(id)
+            for (node in nodes) {
+                if (node.isClickable) {
+                    //Log.d("MyService", "Found clickable button by ID: $id")
+                    return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                 }
             }
+            false
+        } catch (e: Exception) {
+            false
         }
+    }
 
-        return false
+    override fun onInterrupt() {
+        isChecking = false
+        goqiiDetected = false
+        handler.removeCallbacksAndMessages(null)
+    }
+
+    override fun onDestroy() {
+        isChecking = false
+        goqiiDetected = false
+        handler.removeCallbacksAndMessages(null)
+        super.onDestroy()
     }
 }

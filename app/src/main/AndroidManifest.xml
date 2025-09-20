@@ -32,6 +32,9 @@
             <intent-filter>
                 <action android:name="android.accessibilityservice.AccessibilityService" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="MANUAL_TRIGGER" />
+            </intent-filter>
 
             <meta-data
                 android:name="android.accessibilityservice"
