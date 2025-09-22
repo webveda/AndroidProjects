@@ -12,6 +12,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import androidx.appcompat.app.AlertDialog
+import android.text.InputType
 
 class MainActivity : AppCompatActivity() {
 
@@ -21,6 +23,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnLogin: Button
     private lateinit var btnSave: Button
     private lateinit var btnClear: Button
+    private lateinit var btnScroll: Button
 
     private var selectedAccount: String? = null
     private var selectedRowPosition: Int = -1
@@ -44,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         btnLogin = findViewById(R.id.btnLogin)
         btnSave = findViewById(R.id.btnSave)
         btnClear = findViewById(R.id.btnClear)
+        btnScroll = findViewById(R.id.btnScroll)
 
         // Load saved data
         loadSavedData()
@@ -90,6 +94,10 @@ class MainActivity : AppCompatActivity() {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             startActivity(intent)
+        }
+
+        btnScroll.setOnClickListener {
+            showScrollDialog()
         }
     }
 
@@ -145,7 +153,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // NEW FUNCTION: Update data model from UI fields before saving
+    // Update data model from UI fields before saving
     private fun updateDataModelFromUI() {
         for (i in 0 until tableLayout.childCount - 1) { // -1 to skip header
             val tableRow = tableLayout.getChildAt(i + 1) as? TableRow ?: continue
@@ -171,6 +179,47 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun showScrollDialog() {
+        val inputEditText = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+            hint = "Enter text to scroll to"
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Scroll to Text")
+            .setMessage("Enter the text you want to scroll to in GOQii app:")
+            .setView(inputEditText)
+            .setPositiveButton("OK") { dialog, _ ->
+                val textToFind = inputEditText.text.toString().trim()
+                if (textToFind.isNotEmpty()) {
+                    startScrollProcess(textToFind)
+                } else {
+                    Toast.makeText(this, "Please enter some text", Toast.LENGTH_SHORT).show()
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .create()
+            .show()
+    }
+
+    private fun startScrollProcess(textToFind: String) {
+        MyAccessibilityServiceController.reset()
+
+        val launchIntent = packageManager.getLaunchIntentForPackage(targetPackage)
+        launchIntent?.let { startActivity(it) }
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            MyAccessibilityServiceController.shouldScrollToText = true
+            MyAccessibilityServiceController.textToScrollTo = textToFind
+            Log.d("MainActivity", "Starting scroll for text: $textToFind")
+
+            triggerAccessibilityService()
+        }, 20)
     }
 
     private fun createHeaderTextView(text: String, weight: Float): TextView {
@@ -282,11 +331,17 @@ class MainActivity : AppCompatActivity() {
 object MyAccessibilityServiceController {
     var shouldClickSignIn = false
     var shouldClickBtnLogin = false
+    var shouldSelectEmail = false
+    var shouldScrollToText = false
     var selectedAccount: String? = null
+    var textToScrollTo: String? = null  // Text to scroll to
 
     fun reset() {
         shouldClickSignIn = false
         shouldClickBtnLogin = false
+        shouldSelectEmail = false
+        shouldScrollToText = false
         selectedAccount = null
+        textToScrollTo = null
     }
 }
