@@ -92,4 +92,13 @@
         android:layout_marginTop="8dp"
         android:backgroundTint="@color/button_scroll"/>
 
+    <Button
+        android:id="@+id/btnStop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="🛑 STOP Automation"
+        android:layout_marginTop="8dp"
+        android:backgroundTint="@color/button_stop"
+        android:textColor="@android:color/white"/>
+
 </LinearLayout>

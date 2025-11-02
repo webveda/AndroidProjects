@@ -26,10 +26,12 @@ class MyAccessibilityService : AccessibilityService() {
 
     private fun startOrRestartChecking() {
         // Only check if we need to automate AND app is detected
+        // Update the startOrRestartChecking() condition
         if ((MyAccessibilityServiceController.shouldClickSignIn ||
                     MyAccessibilityServiceController.shouldClickBtnLogin ||
                     MyAccessibilityServiceController.shouldSelectEmail ||
-                    MyAccessibilityServiceController.shouldScrollToText) && goqiiDetected) {
+                    MyAccessibilityServiceController.shouldScrollToText ||
+                    MyAccessibilityServiceController.shouldScrollAndLike) && goqiiDetected) {
             if (!isChecking) {
                 isChecking = true
                 startChecking()
@@ -46,10 +48,12 @@ class MyAccessibilityService : AccessibilityService() {
                 if (!isChecking) return
 
                 // Check if we still need to automate AND app is still detected
+                // Update the startOrRestartChecking() condition
                 if ((MyAccessibilityServiceController.shouldClickSignIn ||
                             MyAccessibilityServiceController.shouldClickBtnLogin ||
                             MyAccessibilityServiceController.shouldSelectEmail ||
-                            MyAccessibilityServiceController.shouldScrollToText) && goqiiDetected) {
+                            MyAccessibilityServiceController.shouldScrollToText ||
+                            MyAccessibilityServiceController.shouldScrollAndLike) && goqiiDetected) {
 
                     checkAndClickButtons()
 
@@ -126,7 +130,185 @@ class MyAccessibilityService : AccessibilityService() {
             }
         }
 
+
+        // Add the scroll and like logic to checkAndClickButtons() function:
+        // Step 5: Scroll and like by date range (NEW STEP)
+        if (MyAccessibilityServiceController.shouldScrollAndLike &&
+            MyAccessibilityServiceController.startDateText != null &&
+            MyAccessibilityServiceController.endDateText != null) {
+
+            val startDate = MyAccessibilityServiceController.startDateText!!
+            val endDate = MyAccessibilityServiceController.endDateText!!
+
+            if (!MyAccessibilityServiceController.foundEndDate) {
+                handleScrollAndLikeProcess(rootNode, startDate, endDate)
+            } else {
+                Log.d("MyService", "✓ SUCCESS: Completed scroll and like from '$startDate' to '$endDate'")
+                MyAccessibilityServiceController.shouldScrollAndLike = false
+                MyAccessibilityServiceController.isProcessingRange = false
+            }
+        }
+
         rootNode.recycle()
+    }
+
+    private fun handleScrollAndLikeProcess(rootNode: AccessibilityNodeInfo, startDate: String, endDate: String) {
+        // First, check if we've found the end date (stop condition)
+        if (checkForText(rootNode, endDate) && MyAccessibilityServiceController.isProcessingRange) {
+            Log.d("MyService", "✓ Found end date: '$endDate' - stopping process")
+            MyAccessibilityServiceController.foundEndDate = true
+            return
+        }
+
+        // Check if we're in the processing range
+        if (MyAccessibilityServiceController.isProcessingRange) {
+            // We're in the range - click like buttons and scroll
+            clickLikeButtonsInRange(rootNode)
+            performScrollDown(rootNode)
+        } else {
+            // We haven't found the start date yet - keep scrolling to find it
+            if (checkForText(rootNode, startDate) && !MyAccessibilityServiceController.foundStartDate) {
+                Log.d("MyService", "✓ Found start date: '$startDate' - starting like process")
+                MyAccessibilityServiceController.foundStartDate = true
+                MyAccessibilityServiceController.isProcessingRange = true
+                clickLikeButtonsInRange(rootNode)
+            } else {
+                // Scroll to find the start date
+                performScrollDown(rootNode)
+            }
+        }
+    }
+
+    private fun checkForText(rootNode: AccessibilityNodeInfo, targetText: String): Boolean {
+        val nodes = rootNode.findAccessibilityNodeInfosByText(targetText)
+        return nodes.isNotEmpty()
+    }
+
+    // Add this to get context for saving
+    private fun saveLikedPosts() {
+        MyAccessibilityServiceController.saveState(this)
+    }
+
+    private fun clickLikeButtonsInRange(rootNode: AccessibilityNodeInfo) {
+        try {
+            val llLikeButtons = rootNode.findAccessibilityNodeInfosByViewId("com.betaout.GOQii:id/llLike")
+
+            for (likeButton in llLikeButtons) {
+                if (likeButton.isClickable) {
+                    val postKey = getPostUniqueKey(likeButton, rootNode)
+
+                    if (postKey != null && !MyAccessibilityServiceController.clickedPostKeys.contains(postKey)) {
+                        Log.d("MyService", "Clicking like - Element ID: $postKey")
+
+                        if (likeButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+                            MyAccessibilityServiceController.clickedPostKeys.add(postKey)
+                            // SAVE IMMEDIATELY AFTER EACH SUCCESSFUL LIKE
+                            saveLikedPosts()
+                            Log.d("MyService", "✓ Saved liked post: $postKey")
+                        }
+
+                        Thread.sleep(500)
+                    } else if (postKey != null) {
+                        Log.d("MyService", "Already liked: $postKey")
+                    }
+                }
+            }
+
+            llLikeButtons.forEach { it.recycle() }
+
+        } catch (e: Exception) {
+            Log.d("MyService", "Error: ${e.message}")
+        }
+    }
+
+    private fun getPostUniqueKey(likeButton: AccessibilityNodeInfo, rootNode: AccessibilityNodeInfo): String? {
+        try {
+            // Find the post container by traversing up the hierarchy
+            var postContainer: AccessibilityNodeInfo? = likeButton.parent
+            var depth = 0
+
+            // Traverse up to find the post container (limit depth to avoid infinite loops)
+            while (postContainer != null && depth < 10) {
+                // Check if this container has the post content we need
+                val description = findChildTextById(postContainer, "com.betaout.GOQii:id/tv_description")
+                val hashtag = findChildTextById(postContainer, "com.betaout.GOQii:id/tvHashtagOtherMessage")
+                // Get the selected email account ID from Controller
+                val emailId = MyAccessibilityServiceController.selectedAccount ?: "no_email"
+                Log.d("MyService", "getPostUniqueKey - Using email: $emailId")
+
+                if (description != null || hashtag != null) {
+                    // Found post content - create unique key
+                    val postKey = "$emailId|${description ?: "no_desc"}|${hashtag ?: "no_hashtag"}"
+                    Log.d("MyService", "Post key: $postKey")
+                    return postKey
+                }
+
+                // Move up to next parent
+                postContainer = postContainer.parent
+                depth++
+            }
+
+            // If hierarchy traversal failed, try searching in the entire root node
+            Log.d("MyService", "Hierarchy traversal failed, searching in root node")
+            val description = findChildTextById(rootNode, "com.betaout.GOQii:id/tv_description")
+            val hashtag = findChildTextById(rootNode, "com.betaout.GOQii:id/tvHashtagOtherMessage")
+            val emailId = MyAccessibilityServiceController.selectedAccount ?: "no_email"
+
+            return if (description != null || hashtag != null) {
+                "$emailId|${description ?: "no_desc"}|${hashtag ?: "no_hashtag"}"
+            } else {
+                null
+            }
+
+        } catch (e: Exception) {
+            Log.d("MyService", "Error getting post key: ${e.message}")
+            return null
+        }
+    }
+
+    private fun findChildTextById(parent: AccessibilityNodeInfo, viewId: String): String? {
+        return try {
+            val nodes = parent.findAccessibilityNodeInfosByViewId(viewId)
+            if (nodes.isNotEmpty()) {
+                val text = nodes[0].text?.toString()
+                nodes.forEach { it.recycle() }
+                text
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            Log.d("MyService", "Error finding child by ID $viewId: ${e.message}")
+            null
+        }
+    }
+
+    private fun performScrollDown(rootNode: AccessibilityNodeInfo): Boolean {
+        val scrollableNodes = mutableListOf<AccessibilityNodeInfo>()
+        findScrollableNodes(rootNode, scrollableNodes)
+
+        for (node in scrollableNodes) {
+            if (node.isScrollable) {
+                Log.d("MyService", "Performing scroll down")
+                if (node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
+                    return true
+                }
+            }
+        }
+
+        return rootNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+    }
+
+    private fun findScrollableNodes(node: AccessibilityNodeInfo, result: MutableList<AccessibilityNodeInfo>) {
+        if (node.isScrollable) {
+            result.add(AccessibilityNodeInfo.obtain(node))
+        }
+
+        for (i in 0 until node.childCount) {
+            node.getChild(i)?.let { child ->
+                findScrollableNodes(child, result)
+                child.recycle()
+            }
+        }
     }
 
     private fun scrollToText(rootNode: AccessibilityNodeInfo, targetText: String): Boolean {
@@ -157,38 +339,6 @@ class MyAccessibilityService : AccessibilityService() {
         }
 
         return false
-    }
-
-    private fun performScrollDown(rootNode: AccessibilityNodeInfo): Boolean {
-        // Find scrollable containers and perform scroll down
-        val scrollableNodes = mutableListOf<AccessibilityNodeInfo>()
-        findScrollableNodes(rootNode, scrollableNodes)
-
-        for (node in scrollableNodes) {
-            if (node.isScrollable) {
-                //Log.d("MyService", "Performing scroll down")
-                if (node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)) {
-                    return true
-                }
-            }
-        }
-
-        // If no scrollable nodes found, try scrolling the root
-        //Log.d("MyService", "Scrolling root node")
-        return rootNode.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
-    }
-
-    private fun findScrollableNodes(node: AccessibilityNodeInfo, result: MutableList<AccessibilityNodeInfo>) {
-        if (node.isScrollable) {
-            result.add(AccessibilityNodeInfo.obtain(node))
-        }
-
-        for (i in 0 until node.childCount) {
-            node.getChild(i)?.let { child ->
-                findScrollableNodes(child, result)
-                child.recycle()
-            }
-        }
     }
 
     // Select email account from Google account chooser
