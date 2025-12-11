@@ -33,6 +33,10 @@ class MainActivity : AppCompatActivity() {
     private val accountsList = mutableListOf<Account>()
     private val sharedPref by lazy { getSharedPreferences("AppPrefs", MODE_PRIVATE) }
 
+    private val monthUpdatedFlag by lazy {
+        sharedPref.getString("month_updated_flag", "") ?: ""
+    }
+
     data class Account(
         val sno: Int,
         var email: String,
@@ -67,6 +71,13 @@ class MainActivity : AppCompatActivity() {
             accountsList.forEachIndexed { index, account ->
                 accountsList[index] = account.copy(isSelected = false)
             }
+
+            // AUTO-UPDATE: Only update dates if we haven't updated this month yet
+            val currentMonthYear = getCurrentMonthYear()
+            if (monthUpdatedFlag != currentMonthYear) {
+                updateDatesToPreviousMonth()
+                saveMonthUpdatedFlag()
+            }
         }
 
         selectedAccount = null
@@ -87,12 +98,16 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSave.setOnClickListener {
-            // FIRST update the data model from the UI, THEN save
+            // FIRST: Update data model from UI (respects manual edits)
             updateDataModelFromUI()
+
+            // THEN: Save the data WITHOUT auto-updating dates
             saveData()
+
             Toast.makeText(this, "Data saved successfully!", Toast.LENGTH_SHORT).show()
             unhighlightAllRows()
         }
+
 
         btnClear.setOnClickListener {
             val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -140,7 +155,7 @@ class MainActivity : AppCompatActivity() {
         // Add header row
         val headerRow = TableRow(this).apply {
             addView(createHeaderTextView("SNo", 1f))
-            addView(createHeaderTextView("Account", 3f))
+            addView(createHeaderTextView("Account", 5f))
             addView(createHeaderTextView("Last Date", 2f))
         }
         tableLayout.addView(headerRow)
@@ -157,7 +172,7 @@ class MainActivity : AppCompatActivity() {
                 addView(snoView)
 
                 // Account column - EDITABLE
-                val accountEditText = createEditableAccountView(account.email, 3f).apply {
+                val accountEditText = createEditableAccountView(account.email, 5f).apply {
                     setOnClickListener {
                         selectRow(index)
                     }
@@ -205,6 +220,41 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun updateDatesToPreviousMonth() {
+        val lastMonthDate = getPreviousMonthLastDate()
+
+        for (i in accountsList.indices) {
+            // Only update if not "Not logged in"
+            if (accountsList[i].lastDate != "Not logged in") {
+                accountsList[i] = accountsList[i].copy(lastDate = lastMonthDate)
+            }
+        }
+
+        refreshTable()
+        saveData()
+        Toast.makeText(this, "Dates auto-updated to $lastMonthDate for new month", Toast.LENGTH_LONG).show()
+    }
+
+    private fun getPreviousMonthLastDate(): String {
+        val calendar = java.util.Calendar.getInstance()
+
+        // Go to first day of current month, then back one day to get last day of previous month
+        calendar.set(java.util.Calendar.DAY_OF_MONTH, 1)
+        calendar.add(java.util.Calendar.DAY_OF_MONTH, -1)
+
+        val day = calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        val month = calendar.get(java.util.Calendar.MONTH)
+        val year = calendar.get(java.util.Calendar.YEAR)
+
+        val monthNames = arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+        val monthCode = monthNames.indexOf(monthNames[month]) + 1
+        return String.format("%02d/%02d/%04d", day, monthCode, year)
+
+        //return "${day}/${monthNames[month]}/$year"
     }
 
     private fun showScrollDialog() {
@@ -554,6 +604,18 @@ class MainActivity : AppCompatActivity() {
         val month = monthNames[calendar.get(Calendar.MONTH)]
         return "| $day $month"
     }
+
+    private fun saveMonthUpdatedFlag() {
+        val currentMonthYear = getCurrentMonthYear()
+        sharedPref.edit().putString("month_updated_flag", currentMonthYear).apply()
+    }
+
+    private fun getCurrentMonthYear(): String {
+        val calendar = java.util.Calendar.getInstance()
+        val month = calendar.get(java.util.Calendar.MONTH)
+        val year = calendar.get(java.util.Calendar.YEAR)
+        return "$month-$year"  // e.g., "11-2025" for December 2025
+    }
 }
 
 object MyAccessibilityServiceController {
@@ -569,7 +631,15 @@ object MyAccessibilityServiceController {
     var isProcessingRange = false      // Whether we're in the date range
     var foundStartDate = false         // Whether start date was found
     var foundEndDate = false           // Whether end date was found
+
     val clickedPostKeys = mutableSetOf<String>() // Track liked posts by their content key
+
+    var shouldNavigateToArena = false
+    var postLoginStep = 0  // 0=not started, 1=check home, 2=click arena, 3=verify arena
+    var arenaClickTime = 0L
+
+    var isWaitingForLoginComplete = false
+    var loginWaitStartTime = 0L
 
     fun reset() {
         shouldClickSignIn = false
@@ -584,6 +654,13 @@ object MyAccessibilityServiceController {
         isProcessingRange = false
         foundStartDate = false
         foundEndDate = false
+
+        //shouldNavigateToArena = false
+        //postLoginStep = 0
+        //arenaClickTime = 0L
+
+        isWaitingForLoginComplete = false
+        loginWaitStartTime = 0L
         //clickedPostKeys.clear()  // Clear tracked posts
     }
 

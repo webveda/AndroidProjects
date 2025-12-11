@@ -1,6 +1,7 @@
 package com.example.goqiilogins
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -15,6 +16,7 @@ class MyAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
+        //Log.d("MyService", "EVENT RECEIVED: ${event.eventType}, Package: ${event.packageName}")
         if (event.packageName != "com.betaout.GOQii" && event.packageName != "com.google.android.gms") return
 
         //Log.d("MyService", "App detected: ${event.packageName}")
@@ -31,6 +33,7 @@ class MyAccessibilityService : AccessibilityService() {
                     MyAccessibilityServiceController.shouldClickBtnLogin ||
                     MyAccessibilityServiceController.shouldSelectEmail ||
                     MyAccessibilityServiceController.shouldScrollToText ||
+                    MyAccessibilityServiceController.shouldNavigateToArena ||
                     MyAccessibilityServiceController.shouldScrollAndLike) && goqiiDetected) {
             if (!isChecking) {
                 isChecking = true
@@ -53,6 +56,7 @@ class MyAccessibilityService : AccessibilityService() {
                             MyAccessibilityServiceController.shouldClickBtnLogin ||
                             MyAccessibilityServiceController.shouldSelectEmail ||
                             MyAccessibilityServiceController.shouldScrollToText ||
+                            MyAccessibilityServiceController.shouldNavigateToArena ||
                             MyAccessibilityServiceController.shouldScrollAndLike) && goqiiDetected) {
 
                     checkAndClickButtons()
@@ -71,7 +75,7 @@ class MyAccessibilityService : AccessibilityService() {
     private fun checkAndClickButtons() {
         val rootNode = rootInActiveWindow ?: return
 
-        //Log.d("MyService", "=== CHECKING BUTTONS ===")
+        //Log.d("MyService", "=== checkAndClickButtons() CALLED - Step: ${MyAccessibilityServiceController.postLoginStep} ===")
         //Log.d("MyService", "Flags - SignIn: ${MyAccessibilityServiceController.shouldClickSignIn}, " +
         //        "Google: ${MyAccessibilityServiceController.shouldClickBtnLogin}, " +
         //        "Email: ${MyAccessibilityServiceController.shouldSelectEmail}")
@@ -107,9 +111,59 @@ class MyAccessibilityService : AccessibilityService() {
                 //Log.d("MyService", "✓ SUCCESS: Email account selected")
                 MyAccessibilityServiceController.shouldSelectEmail = false
                 MyAccessibilityServiceController.selectedAccount = null
+
+                Thread.sleep(2000)
+                MyAccessibilityServiceController.shouldNavigateToArena = true
+                MyAccessibilityServiceController.postLoginStep = 1
+
+                //rootNode.recycle()
+                //return
             } else {
                 Log.d("MyService", "Email account not found yet")
             }
+        }
+
+        //Log.d("Arena Flag value: ", MyAccessibilityServiceController.shouldNavigateToArena.toString())
+        // Post-login navigation flow (Extra screens check logic)
+        if (MyAccessibilityServiceController.shouldNavigateToArena) {
+            when (MyAccessibilityServiceController.postLoginStep) {
+                1 -> { // Check Home
+                    if (isHomeScreenPresent(rootNode)) {
+                        MyAccessibilityServiceController.postLoginStep = 2
+                        Log.d("Home Check: ", "Going to step 2")
+                    } else {
+                        performGlobalAction(GLOBAL_ACTION_BACK)
+                        handler.postDelayed({}, 2000) // Wait 2s
+                    }
+                }
+
+                2 -> { // Click Arena
+                    if (clickArenaButton(rootNode)) {
+                        Log.d("Arena Check: ", "Processing step " + MyAccessibilityServiceController.postLoginStep)
+                        MyAccessibilityServiceController.postLoginStep = 3
+                        MyAccessibilityServiceController.arenaClickTime = System.currentTimeMillis()
+                        handler.postDelayed({}, 4000) // Wait
+                        Log.d("Arena Check 2: ", "Processing step " + MyAccessibilityServiceController.postLoginStep)
+                    }
+                }
+
+                3 -> { // Verify Arena
+                    Log.d("Arena Check 3: ", "Processing step " + MyAccessibilityServiceController.postLoginStep)
+                    if (System.currentTimeMillis() - MyAccessibilityServiceController.arenaClickTime >= 4000) {
+                        if (isArenaScreenPresent(rootNode)) {
+                            MyAccessibilityServiceController.shouldNavigateToArena = false
+                            MyAccessibilityServiceController.postLoginStep = 0
+                            Log.d("Arena Check: ", "Completed")
+                        } else {
+                            performGlobalAction(GLOBAL_ACTION_BACK)
+                            MyAccessibilityServiceController.postLoginStep = 2
+                            Log.d("Arena Check 4: ", "BACK Action in progress")
+                        }
+                    }
+                }
+            }
+            rootNode.recycle()
+            return
         }
 
         // Step 4: Scroll to specific text
@@ -130,9 +184,8 @@ class MyAccessibilityService : AccessibilityService() {
             }
         }
 
-
         // Add the scroll and like logic to checkAndClickButtons() function:
-        // Step 5: Scroll and like by date range (NEW STEP)
+        // Step 5: Scroll and like by date range
         if (MyAccessibilityServiceController.shouldScrollAndLike &&
             MyAccessibilityServiceController.startDateText != null &&
             MyAccessibilityServiceController.endDateText != null) {
@@ -144,6 +197,15 @@ class MyAccessibilityService : AccessibilityService() {
                 handleScrollAndLikeProcess(rootNode, startDate, endDate)
             } else {
                 Log.d("MyService", "✓ SUCCESS: Completed scroll and like from '$startDate' to '$endDate'")
+
+                // AFTER like process completes go back to GOQiilogins app
+                //Log.d("MyService", "LIKE process completed - bringing app back")
+                handler.postDelayed({
+                    val intent = packageManager.getLaunchIntentForPackage("com.example.goqiilogins")
+                    intent?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+                    startActivity(intent)
+                }, 2000)
+
                 MyAccessibilityServiceController.shouldScrollAndLike = false
                 MyAccessibilityServiceController.isProcessingRange = false
             }
@@ -198,13 +260,13 @@ class MyAccessibilityService : AccessibilityService() {
                     val postKey = getPostUniqueKey(likeButton, rootNode)
 
                     if (postKey != null && !MyAccessibilityServiceController.clickedPostKeys.contains(postKey)) {
-                        Log.d("MyService", "Clicking like - Element ID: $postKey")
+                        //Log.d("MyService", "Clicking like - Element ID: $postKey")
 
                         if (likeButton.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
                             MyAccessibilityServiceController.clickedPostKeys.add(postKey)
                             // SAVE IMMEDIATELY AFTER EACH SUCCESSFUL LIKE
                             saveLikedPosts()
-                            Log.d("MyService", "✓ Saved liked post: $postKey")
+                            //Log.d("MyService", "✓ Saved liked post: $postKey")
                         }
 
                         Thread.sleep(500)
@@ -234,12 +296,12 @@ class MyAccessibilityService : AccessibilityService() {
                 val hashtag = findChildTextById(postContainer, "com.betaout.GOQii:id/tvHashtagOtherMessage")
                 // Get the selected email account ID from Controller
                 val emailId = MyAccessibilityServiceController.selectedAccount ?: "no_email"
-                Log.d("MyService", "getPostUniqueKey - Using email: $emailId")
+                //Log.d("MyService", "getPostUniqueKey - Using email: $emailId")
 
                 if (description != null || hashtag != null) {
                     // Found post content - create unique key
                     val postKey = "$emailId|${description ?: "no_desc"}|${hashtag ?: "no_hashtag"}"
-                    Log.d("MyService", "Post key: $postKey")
+                    //Log.d("MyService", "Post key: $postKey")
                     return postKey
                 }
 
@@ -397,6 +459,47 @@ class MyAccessibilityService : AccessibilityService() {
                 }
             }
             false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun isHomeScreenPresent(rootNode: AccessibilityNodeInfo): Boolean {
+        return try {
+            val homeNodes = rootNode.findAccessibilityNodeInfosByViewId("com.betaout.GOQii:id/ll_home")
+            val found = homeNodes.isNotEmpty()
+            Log.d("MyService", "Home check: found ${homeNodes.size} ll_home nodes = $found")
+            found
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun clickArenaButton(rootNode: AccessibilityNodeInfo): Boolean {
+        return try {
+            val arenaNodes = rootNode.findAccessibilityNodeInfosByViewId("com.betaout.GOQii:id/ll_social")
+            for (node in arenaNodes) {
+                if (node.isClickable) {
+                    Log.d("MyService", "Clicking Arena button")
+                    return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                }
+            }
+            false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun isArenaScreenPresent(rootNode: AccessibilityNodeInfo): Boolean {
+        return try {
+            val arenaNodes = rootNode.findAccessibilityNodeInfosByViewId("com.betaout.GOQii:id/ll_social")
+            // If we can still see Arena button, might mean we're still on home screen
+            // OR check for Arena-specific elements
+            //val arenaIndicator = rootNode.findAccessibilityNodeInfosByViewId("com.betaout.GOQii:id/some_arena_specific_id")
+            //arenaIndicator.isNotEmpty()
+            arenaNodes.isNotEmpty().also {
+                if (it) Log.d("MyService", "Found ${arenaNodes.size} ll_social elements")
+            }
         } catch (e: Exception) {
             false
         }
